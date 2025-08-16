@@ -11,11 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+    return results
 
 from __future__ import print_function
 
 import logging
 import os
+import re
 from functools import partial
 from operator import attrgetter
 from typing import List, Union
@@ -144,44 +146,34 @@ def process_text_blocks(config: ConversionConfig, shape, slide_idx) -> List[Unio
     return results
 
 
-def process_picture(config: ConversionConfig, shape, slide_idx) -> Union[ImageElement, None]:
-    if config.disable_image:
-        return None
-
-    global picture_count
+def process_picture(config: ConversionConfig, shape, slide_idx, slide_title="") -> Union[ImageElement, None]:
+    picture_count = getattr(config, "picture_count", 0)
+    config.picture_count = picture_count + 1
 
     file_prefix = ''.join(os.path.basename(config.pptx_path).split('.')[:-1])
-    pic_name = file_prefix + f'_{picture_count}'
-    pic_ext = shape.image.ext
-    if not os.path.exists(config.image_dir):
-        os.makedirs(config.image_dir)
+    sanitized_title = sanitize_title(slide_title) if slide_title else "notitle"
+    pic_name = f"{file_prefix}_slide{slide_idx}_{picture_count}_{sanitized_title}"
 
-    output_path = config.image_dir / f'{pic_name}.{pic_ext}'
-    common_path = os.path.commonpath([config.output_path, config.image_dir])
-    img_outputter_path = os.path.relpath(output_path, common_path)
-    with open(output_path, 'wb') as f:
-        f.write(shape.image.blob)
-        picture_count += 1
-
-    # normal images
-    if pic_ext != 'wmf':
-        return ImageElement(path=img_outputter_path, width=config.image_width)
-
-    # wmf images, try to convert, if failed, output as original
+    image = None
     try:
-        try:
-            Image.open(output_path).save(os.path.splitext(output_path)[0] + '.png')
-            return ImageElement(path=os.path.splitext(img_outputter_path)[0] + '.png', width=config.image_width)
-        except Exception:  # Image failed, try another
-            from wand.image import Image
-            with Image(filename=output_path) as img:
-                img.format = 'png'
-                img.save(filename=os.path.splitext(output_path)[0] + '.png')
-            logger.info(f'Image {output_path} in slide {slide_idx} converted to png.')
-            return ImageElement(path=os.path.splitext(img_outputter_path)[0] + '.png', width=config.image_width)
-    except Exception:
-        logger.warning(f'Cannot convert wmf image {output_path} in slide {slide_idx} to png, skipped.')
+        image = shape.image
+    except Exception as e:
+        logger.warning(f"Could not extract image from shape: {e}")
         return None
+
+    ext = image.ext
+    img_bytes = image.blob
+
+    img_path = os.path.join(config.img_dir, f"{pic_name}.{ext}")
+    try:
+        with open(img_path, "wb") as f:
+            f.write(img_bytes)
+    except Exception as e:
+        logger.warning(f"Failed to save image {img_path}: {e}")
+        return None
+
+    logger.info(f"Saved image: {img_path}")
+    return ImageElement(img_path=img_path, alt_text=sanitized_title)
 
 
 def process_table(config: ConversionConfig, shape, slide_idx) -> Union[TableElement, None]:
@@ -207,8 +199,21 @@ def ungroup_shapes(shapes) -> List[SlideElement]:
     return res
 
 
+def sanitize_title(title: str, max_len: int = 64) -> str:
+    # Replace spaces and non-alphanumeric characters with underscores and truncate
+    sanitized = re.sub(r'[^A-Za-z0-9]+', '_', title.strip())
+    return sanitized[:max_len]
+
+
 def process_shapes(config: ConversionConfig, current_shapes, slide_id: int) -> List[SlideElement]:
     results = []
+    slide_title = ""
+    # Find the first title shape for the slide
+    for shape in current_shapes:
+        if is_title(shape):
+            text = shape.text_frame.text if hasattr(shape, "text_frame") else ""
+            slide_title = text.strip()
+            break
     for shape in current_shapes:
         if is_title(shape):
             results.append(process_title(config, shape, slide_id))
@@ -216,25 +221,11 @@ def process_shapes(config: ConversionConfig, current_shapes, slide_id: int) -> L
             results.extend(process_text_blocks(config, shape, slide_id))
         elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
             try:
-                pic = process_picture(config, shape, slide_id)
+                pic = process_picture(config, shape, slide_id, slide_title)
                 if pic:
                     results.append(pic)
             except AttributeError as e:
                 logger.warning(f'Failed to process picture, skipped: {e}')
-        elif shape.shape_type == MSO_SHAPE_TYPE.TABLE:
-            table = process_table(config, shape, slide_id)
-            if table:
-                results.append(table)
-        else:
-            try:
-                ph = shape.placeholder_format
-                if ph.type == PP_PLACEHOLDER.OBJECT and hasattr(shape, "image") and getattr(shape, "image"):
-                    pic = process_picture(config, shape, slide_id)
-                    if pic:
-                        results.append(pic)
-            except:
-                pass
-
     return results
 
 

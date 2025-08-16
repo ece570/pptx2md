@@ -16,6 +16,7 @@ from __future__ import print_function
 
 import logging
 import os
+import re
 from functools import partial
 from operator import attrgetter
 from typing import List, Union
@@ -44,10 +45,16 @@ from pptx2md.types import (
 
 logger = logging.getLogger(__name__)
 
-picture_count = 0
+def sanitize_filename(name: str) -> str:
+    """Sanitizes a string to be used as a filename."""
+    # Replace spaces and special characters with underscores
+    name = re.sub(r'[\\/:*?"<>|\s]', '_', name)
+    # Truncate to 60 characters
+    return name[:60]
 
 
 def is_title(shape):
+
     if shape.is_placeholder and (shape.placeholder_format.type == PP_PLACEHOLDER.TITLE or
                                  shape.placeholder_format.type == PP_PLACEHOLDER.SUBTITLE or
                                  shape.placeholder_format.type == PP_PLACEHOLDER.VERTICAL_TITLE or
@@ -144,14 +151,14 @@ def process_text_blocks(config: ConversionConfig, shape, slide_idx) -> List[Unio
     return results
 
 
-def process_picture(config: ConversionConfig, shape, slide_idx) -> Union[ImageElement, None]:
+def process_picture(config: ConversionConfig, shape, slide_idx: int, pic_idx: int,
+                    slide_title: str) -> Union[ImageElement, None]:
     if config.disable_image:
         return None
 
-    global picture_count
-
     file_prefix = ''.join(os.path.basename(config.pptx_path).split('.')[:-1])
-    pic_name = file_prefix + f'_{picture_count}'
+    sanitized_title = sanitize_filename(slide_title)
+    pic_name = f'{file_prefix}_slide{slide_idx:02d}_pic{pic_idx + 1}_{sanitized_title}'
     pic_ext = shape.image.ext
     if not os.path.exists(config.image_dir):
         os.makedirs(config.image_dir)
@@ -161,7 +168,6 @@ def process_picture(config: ConversionConfig, shape, slide_idx) -> Union[ImageEl
     img_outputter_path = os.path.relpath(output_path, common_path)
     with open(output_path, 'wb') as f:
         f.write(shape.image.blob)
-        picture_count += 1
 
     # normal images
     if pic_ext != 'wmf':
@@ -209,6 +215,13 @@ def ungroup_shapes(shapes) -> List[SlideElement]:
 
 def process_shapes(config: ConversionConfig, current_shapes, slide_id: int) -> List[SlideElement]:
     results = []
+    slide_title = ''
+    for shape in current_shapes:
+        if is_title(shape):
+            slide_title = shape.text_frame.text.strip()
+            break
+
+    pic_idx = 0
     for shape in current_shapes:
         if is_title(shape):
             results.append(process_title(config, shape, slide_id))
@@ -216,9 +229,10 @@ def process_shapes(config: ConversionConfig, current_shapes, slide_id: int) -> L
             results.extend(process_text_blocks(config, shape, slide_id))
         elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
             try:
-                pic = process_picture(config, shape, slide_id)
+                pic = process_picture(config, shape, slide_id, pic_idx, slide_title)
                 if pic:
                     results.append(pic)
+                    pic_idx += 1
             except AttributeError as e:
                 logger.warning(f'Failed to process picture, skipped: {e}')
         elif shape.shape_type == MSO_SHAPE_TYPE.TABLE:
@@ -229,9 +243,10 @@ def process_shapes(config: ConversionConfig, current_shapes, slide_id: int) -> L
             try:
                 ph = shape.placeholder_format
                 if ph.type == PP_PLACEHOLDER.OBJECT and hasattr(shape, "image") and getattr(shape, "image"):
-                    pic = process_picture(config, shape, slide_id)
+                    pic = process_picture(config, shape, slide_id, pic_idx, slide_title)
                     if pic:
                         results.append(pic)
+                        pic_idx += 1
             except:
                 pass
 

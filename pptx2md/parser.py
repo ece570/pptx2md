@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 def sanitize_filename(name: str) -> str:
     """Sanitizes a string to be used as a filename."""
     # Replace spaces and special characters with underscores
-    name = re.sub(r'[\\/:*?"<>|\s]', '_', name)
+    name = re.sub(r'[^a-zA-Z0-9]+', '_', name)
     # Truncate to 60 characters
     return name[:60]
 

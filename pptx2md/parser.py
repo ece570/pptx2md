@@ -158,7 +158,7 @@ def process_picture(config: ConversionConfig, shape, slide_idx: int, pic_idx: in
 
     file_prefix = ''.join(os.path.basename(config.pptx_path).split('.')[:-1])
     sanitized_title = sanitize_filename(slide_title)
-    pic_name = f'{file_prefix}_slide{slide_idx:02d}_pic{pic_idx + 1}_{sanitized_title}'
+    pic_name = f'slide{slide_idx:02d}_pic{pic_idx + 1}_{sanitized_title}'
     pic_ext = shape.image.ext
     if not os.path.exists(config.image_dir):
         os.makedirs(config.image_dir)

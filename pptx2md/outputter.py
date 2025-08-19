@@ -368,15 +368,12 @@ class QuartoFormatter(Formatter):
     def put_header(self):
         self.ofile.write('''---
 title: "Presentation Title"
-author: "Author"
+author: "David I. Inouye"
 format: 
   revealjs:
-    slide-number: c/t
-    width: 1600
-    height: 900
-    logo: img/logo.png
-    footer: "Organization"
-    incremental: true
+    slide-number: c
+    width: 1920
+    height: 1080
     theme: [simple]
 ---
 ''')
